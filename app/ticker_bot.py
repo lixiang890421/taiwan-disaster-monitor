@@ -17,6 +17,9 @@ CITIES = [
     "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"
 ]
 
+CWA_WARNING_PAGE = "https://www.cwa.gov.tw/V8/C/P/Warning/W26.html"
+CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001"
+
 SOURCES = [
     {
         "name": "人事行政總處",
@@ -25,8 +28,8 @@ SOURCES = [
     },
     {
         "name": "中央氣象署",
-        "type": "天氣警特報",
-        "url": "https://www.cwa.gov.tw/V8/C/P/Warning/W26.html"
+        "type": "天氣警特報API",
+        "url": CWA_API_URL
     },
     {
         "name": "中央氣象署",
@@ -50,7 +53,7 @@ def now_tw():
 
 def fetch_text(url):
     headers = {
-        "User-Agent": "Mozilla/5.0 TaiwanDisasterTickerBot/0.1"
+        "User-Agent": "Mozilla/5.0 TaiwanDisasterTickerBot/0.2"
     }
     r = requests.get(url, headers=headers, timeout=20)
     r.raise_for_status()
@@ -66,7 +69,65 @@ def near_text(text, keyword, window=260):
     end = min(len(text), idx + len(keyword) + window)
     return text[start:end]
 
-def add_event(events, level, source, city, typ, title, url):
+def flatten_strings(obj):
+    values = []
+    if isinstance(obj, dict):
+        for v in obj.values():
+            values.extend(flatten_strings(v))
+    elif isinstance(obj, list):
+        for item in obj:
+            values.extend(flatten_strings(item))
+    elif isinstance(obj, str):
+        values.append(obj)
+    else:
+        if obj is not None:
+            values.append(str(obj))
+    return values
+
+def first_value(obj, keys):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in keys and v:
+                return str(v)
+            found = first_value(v, keys)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = first_value(item, keys)
+            if found:
+                return found
+    return ""
+
+def weather_level(phenomena, significance, all_text):
+    text = f"{phenomena} {significance} {all_text}"
+
+    if "超大豪雨" in text:
+        return "L4", "超大豪雨"
+    if "大豪雨" in text:
+        return "L3", "大豪雨"
+    if "豪雨" in text:
+        return "L2", "豪雨"
+    if "大雨" in text:
+        return "L1", "大雨"
+
+    if "颱風" in text and "警報" in text:
+        return "L4", "颱風警報"
+    if "颱風" in text:
+        return "L3", "颱風資訊"
+
+    if "低溫" in text:
+        return "L1", "低溫"
+    if "高溫" in text:
+        return "L1", "高溫"
+    if "強風" in text:
+        return "L1", "強風"
+    if "濃霧" in text:
+        return "L1", "濃霧"
+
+    return "L1", phenomena or "天氣警特報"
+
+def add_event(events, level, source, city, typ, title, url, extra=None):
     item = {
         "level": level,
         "source": source,
@@ -76,6 +137,9 @@ def add_event(events, level, source, city, typ, title, url):
         "url": url,
         "updated_at": now_tw()
     }
+
+    if extra:
+        item.update(extra)
 
     key = f"{level}|{source}|{city}|{typ}|{title}|{url}"
     if key not in {e.get("_key") for e in events}:
@@ -113,22 +177,80 @@ def check_dgpa(text, source, events):
                 source["url"]
             )
 
-def check_cwa_weather(text, source, events):
-    # 只抓靠近縣市名稱附近的警特報文字，降低誤判。
-    for city in CITIES:
-        if city not in text:
+def check_cwa_weather_api(events):
+    key = os.getenv("CWA_API_KEY")
+
+    if not key:
+        add_event(
+            events,
+            "L1",
+            "系統",
+            "全台",
+            "資料源異常",
+            "中央氣象署 API 授權碼未設定，無法更新天氣警特報",
+            CWA_WARNING_PAGE
+        )
+        return
+
+    r = requests.get(
+        CWA_API_URL,
+        params={
+            "Authorization": key,
+            "format": "JSON"
+        },
+        timeout=20
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    locations = data.get("records", {}).get("location", [])
+
+    for loc in locations:
+        city = loc.get("locationName", "")
+        if city not in CITIES:
             continue
 
-        seg = near_text(text, city, 360)
+        hazards = (
+            loc.get("hazardConditions", {})
+               .get("hazards", [])
+        )
 
-        if "超大豪雨" in seg:
-            add_event(events, "L4", source["name"], city, "超大豪雨", f"{city} 命中超大豪雨警特報相關文字", source["url"])
-        elif "大豪雨" in seg:
-            add_event(events, "L3", source["name"], city, "大豪雨", f"{city} 命中大豪雨警特報相關文字", source["url"])
-        elif "豪雨" in seg:
-            add_event(events, "L2", source["name"], city, "豪雨", f"{city} 命中豪雨警特報相關文字", source["url"])
-        elif "大雨" in seg:
-            add_event(events, "L1", source["name"], city, "大雨", f"{city} 命中大雨警特報相關文字", source["url"])
+        if not hazards:
+            continue
+
+        for hazard in hazards:
+            all_text = " ".join(flatten_strings(hazard))
+
+            phenomena = first_value(hazard, ["phenomena"]) or ""
+            significance = first_value(hazard, ["significance"]) or ""
+            start_time = first_value(hazard, ["startTime"]) or ""
+            end_time = first_value(hazard, ["endTime"]) or ""
+
+            level, event_type = weather_level(phenomena, significance, all_text)
+
+            display_name = ""
+            if phenomena and significance:
+                display_name = f"{phenomena}{significance}"
+            elif phenomena:
+                display_name = phenomena
+            else:
+                display_name = event_type
+
+            title = f"{city} 目前發布{display_name}"
+
+            add_event(
+                events,
+                level,
+                "中央氣象署",
+                city,
+                event_type,
+                title,
+                CWA_WARNING_PAGE,
+                {
+                    "start_time": start_time,
+                    "end_time": end_time
+                }
+            )
 
 def check_cwa_tsunami(text, source, events):
     strong_words = [
@@ -152,8 +274,6 @@ def check_cwa_tsunami(text, source, events):
 
 def check_tainan(text, source, events):
     city = "臺南市"
-
-    # 只先看前段文字，通常官方網站最新公告會在前面，降低抓到歷史資料的機率。
     head = text[:5000]
 
     if "一級開設" in head or "提升為一級" in head:
@@ -179,13 +299,14 @@ def build_events():
 
     for source in SOURCES:
         try:
+            if source["type"] == "天氣警特報API":
+                check_cwa_weather_api(events)
+                continue
+
             text = fetch_text(source["url"])
 
             if source["type"] == "停班停課":
                 check_dgpa(text, source, events)
-
-            elif source["type"] == "天氣警特報":
-                check_cwa_weather(text, source, events)
 
             elif source["type"] == "海嘯資訊":
                 check_cwa_tsunami(text, source, events)
@@ -201,20 +322,21 @@ def build_events():
                 "系統",
                 "資料源異常",
                 f"{source['name']}｜{source['type']} 抓取失敗：{e}",
-                source["url"]
+                source.get("url", "#")
             )
 
-    # 清掉內部 key，依等級排序。
     rank = {"L4": 4, "L3": 3, "L2": 2, "L1": 1}
     cleaned = []
+
     for e in events:
         e.pop("_key", None)
         cleaned.append(e)
 
     cleaned.sort(key=lambda x: rank.get(x.get("level", "L1"), 0), reverse=True)
-    return cleaned[:20]
+    return cleaned[:30]
 
 def write_events(events):
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(events, f, ensure_ascii=False, indent=2)
@@ -224,7 +346,11 @@ def main():
     while True:
         events = build_events()
         write_events(events)
+
         print(f"[{now_tw()}] wrote {len(events)} ticker events", flush=True)
+        for e in events[:10]:
+            print(f" - {e.get('level')} {e.get('source')} {e.get('city')} {e.get('type')} {e.get('title')}", flush=True)
+
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":

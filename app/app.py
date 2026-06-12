@@ -103,9 +103,14 @@ GENERAL_LINKS = [
         "url": "https://scweb.cwa.gov.tw/zh-tw/tsunami"
     },
     {
-        "title": "消防署｜災害情報站",
-        "desc": "全國災害應變與相關資訊入口。",
-        "url": "https://www.emic.gov.tw/"
+        "title": "NCDR Watch｜災害監測總覽",
+        "desc": "查看豪雨、短延時強降雨、颱風、熱浪、寒害等災害監測資訊。",
+        "url": "https://watch.ncdr.nat.gov.tw/"
+    },
+    {
+        "title": "全民防災e點通",
+        "desc": "提供個人化防災警示、應變資訊與防災準備知識。",
+        "url": "https://bear.emic.gov.tw/"
     },
 ]
 
