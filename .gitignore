@@ -1,0 +1,10 @@
+data/
+*.db
+*.sqlite
+*.log
+.env
+__pycache__/
+*.pyc
+.DS_Store
+app/*.bak.*
+app/*.bak.*
