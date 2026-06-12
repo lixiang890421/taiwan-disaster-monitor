@@ -32,6 +32,23 @@ CITIES = [
 
 CITY_MAP = {c["id"]: c for c in CITIES}
 
+CITY_COVERAGE = {
+    "tainan": {
+        "label": "完整接入",
+        "class": "full",
+        "desc": "中央資料＋臺南市政府／臺南災害應變告示網已接入"
+    }
+}
+
+DEFAULT_COVERAGE = {
+    "label": "基本接入",
+    "class": "basic",
+    "desc": "全國豪雨、颱風等災害已連結至中央氣象署；其餘縣市除臺南市外，皆尚未連結該縣市之災防網頁，請等待更新。"
+}
+
+def get_city_coverage(city_id):
+    return CITY_COVERAGE.get(city_id, DEFAULT_COVERAGE)
+
 TICKER_FILE = Path("/data/ticker.json")
 
 def load_ticker_events():
@@ -294,6 +311,24 @@ def css():
         border-radius: 999px;
         padding: 4px 10px;
         font-size: 13px;
+        margin-right: 6px;
+        margin-top: 6px;
+    }
+    .tag.full {
+        background: rgba(16,185,129,0.18);
+        color: #6ee7b7;
+        border: 1px solid rgba(110,231,183,0.45);
+    }
+    .tag.basic {
+        background: rgba(96,165,250,0.16);
+        color: #93c5fd;
+        border: 1px solid rgba(147,197,253,0.4);
+    }
+    .coverage-note {
+        margin-top: 10px;
+        color: #a7b3c7;
+        font-size: 13px;
+        line-height: 1.5;
     }
     .back {
         display: inline-block;
@@ -351,10 +386,13 @@ def index():
 
     city_html = ""
     for city in CITIES:
+        coverage = get_city_coverage(city["id"])
         city_html += f"""
         <a class="city" href="/city/{escape(city["id"])}">
             <div class="city-name">{escape(city["name"])}</div>
             <span class="tag">{escape(city["region"])}</span>
+            <span class="tag {escape(coverage["class"])}">{escape(coverage["label"])}</span>
+            <div class="coverage-note">{escape(coverage["desc"])}</div>
         </a>
         """
 
@@ -375,7 +413,7 @@ def index():
 
 <main>
     <div class="notice">
-        這一版先做成「全台災害入口首頁」。點選縣市後，可快速進入該縣市相關災害資訊入口。
+        全國豪雨、颱風等災害已連結至中央氣象署；其餘縣市除臺南市外，皆尚未連結該縣市之災防網頁，請等待更新。
     </div>
 
     <h2>全國通用災害入口</h2>
@@ -397,6 +435,8 @@ def city_page(city_id):
     if not city:
         abort(404)
 
+    coverage = get_city_coverage(city_id)
+
     links = []
     links.extend(CITY_LINKS.get(city_id, []))
     links.extend(GENERAL_LINKS)
@@ -414,7 +454,7 @@ def city_page(city_id):
 <header>
     <h1>{escape(city["name"])}災害資訊入口</h1>
     <div class="subtitle">
-        區域：{escape(city["region"])}｜地方資訊＋全國通用災害入口
+        區域：{escape(city["region"])}｜資料狀態：{escape(coverage["label"])}
     </div>
 </header>
 
@@ -428,7 +468,7 @@ def city_page(city_id):
     <a class="back" href="/">← 回全台首頁</a>
 
     <div class="notice">
-        這裡先提供 {escape(city["name"])} 常用災害資訊入口。若該縣市尚未建立專屬資料源，會先顯示全國通用官方入口。
+        資料覆蓋說明：{escape(coverage["desc"])}本頁提供 {escape(city["name"])} 常用災害資訊入口；實際災害判斷仍以各官方單位正式公告為準。
     </div>
 
     <h2>{escape(city["name"])}相關連結</h2>
