@@ -223,7 +223,7 @@ def css():
     .ticker {
         display: inline-block;
         padding: 13px 0;
-        animation: marquee 35s linear infinite;
+        animation: marquee 120s linear infinite;
         font-weight: bold;
     }
     .ticker span {
